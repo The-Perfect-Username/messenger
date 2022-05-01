@@ -5,6 +5,7 @@ PORT = 65432  # The port used by the server
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((HOST, PORT))
+
     try:
         while True:
             user_message = input("Type message: ")
