@@ -1,57 +1,54 @@
-from select import select
+from concurrent.futures import thread
 import sys
 import socket
-import selectors
-import types
-
-selector = selectors.DefaultSelector()
+import threading
 
 HOST, PORT = sys.argv[1], int(sys.argv[2])
 
 MAX_SIZE = 1024
 
-def accept_wrapper(sock):
-    conn, addr = sock.accept()  # Should be ready to read
-    print(f"Accepted connection from {addr}")
-    conn.setblocking(False)
-    data = types.SimpleNamespace(addr=addr, inb=b"", outb=b"")
-    events = selectors.EVENT_READ | selectors.EVENT_WRITE
-    selector.register(conn, events, data=data)
+thread_count = 0
 
-def service_connection(key, mask):
-    sock = key.fileobj
-    data = key.data
-    if mask & selectors.EVENT_READ:
-        recv_data = sock.recv(1024)  # Should be ready to read
-        if recv_data:
-            data.outb += recv_data
-        else:
-            print(f"Closing connection to {data.addr}")
-            selector.unregister(sock)
-            sock.close()
-    if mask & selectors.EVENT_WRITE:
-        if data.outb:
-            print(f"Echoing {data.outb!r} to {data.addr}")
-            sent = sock.send(data.outb)  # Should be ready to write
-            data.outb = data.outb[sent:]
+clients = set()
+clients_lock = threading.Lock()
 
+def threaded_client(connection):
+    try:
+        connection.send(str.encode('Welcome to the Server'))
+        
+        while True:
+            data = connection.recv(2048)
+            reply = 'Server Says: ' + data.decode('utf-8')
+            if not data:
+                break
+
+            print (reply)
+            with clients_lock:
+                for c in clients:
+                    c.send(str.encode(reply))
+
+        connection.close()
+    except KeyboardInterrupt:
+        connection.close()
+    finally:
+        connection.close()
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as lsock:
-    lsock.bind((HOST, PORT))
-    lsock.listen()
-    lsock.setblocking(False)
-    
-    selector.register(lsock, selectors.EVENT_READ, data=None)
-
     try:
+        lsock.bind((HOST, PORT))
+        lsock.listen()
+
         while True:
-            events = selector.select(timeout=None)
-            for key, mask in events:
-                if key.data is None:
-                    accept_wrapper(key.fileobj)
-                else:
-                    service_connection(key, mask)
+            Client, address = lsock.accept()
+            with clients_lock:
+                clients.add(Client)
+            print('Connected to: ' + address[0] + ':' + str(address[1]))
+            threading.Thread(target=threaded_client, args=(Client, )).start()
+            thread_count += 1
+            print('Thread Number: ' + str(thread_count))     
+    
     except KeyboardInterrupt:
         print("Caught keyboard interrupt, exiting")
+        lsock.close() 
     finally:
-        selector.close()
+        lsock.close() 
