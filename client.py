@@ -2,42 +2,77 @@ import sys
 import socket
 import threading
 
+from server import MAX_SIZE
+
 HOST, PORT = sys.argv[1], int(sys.argv[2])
 
-lthread = threading.Lock()
+class Client:
+    def __init__(self, sock, host, port):
+        self.sock = sock
+        self.port = port
+        self.host = host
+        self.lthread = threading.Lock()
+        self.t1 = None
+        self.t2 = None
 
-def handle_user_input(connection):
-    user_message = input("Type message: ")
-    if (user_message):
-        connection.sendall(bytes(user_message, encoding="utf-8"))
+    def start(self):
+        try:
+            self.establish_connection()
+            
+            response = self.sock.recv(MAX_SIZE)
+            
+            print (response.decode('utf-8'))
+            
+            self.lthread.acquire()
+            
+            while True:
+                self.t1 = threading.Thread(target=self.handle_recieved_data)
+                self.t2 = threading.Thread(target=self.handle_user_input)
 
-def handle_recieved_data(connection):
-    response = connection.recv(2048)
+                self.t1.start()
+                self.t2.start()
 
-    if not response:
-        lthread.release()
+                self.t1.join()
+                self.t2.join()
 
-    print (response.decode("utf-8"))
+        except KeyboardInterrupt:
+            if self.t1 and self.t2:
+                self.t1.join()
+                self.t2.join()
+            self.sock.close()
+        except SystemExit:
+            if self.t1 and self.t2:
+                self.t1.join()
+                self.t2.join()
+            self.sock.close()
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    try:
-        sock.connect((HOST, PORT))
+    def establish_connection(self):
+        self.sock.connect((self.host, self.port))
 
-        response = sock.recv(2048)
+    def handle_user_input(self):
+        try:
+            user_message = input("Type message: ")
+            
+            if (user_message):
+                self.sock.send(bytes(user_message, encoding="utf-8"))
+        except ConnectionAbortedError:
+            print ("Connection was aborted handle user")
 
-        print (response.decode('utf-8'))
+    def handle_recieved_data(self):
+        try:
+            response = self.sock.recv(MAX_SIZE)
 
-        lthread.acquire()
+            if not response:
+                self.lthread.release()
 
-        while True:
-            threading.Thread(target=handle_recieved_data, args=(sock, )).start()
-            threading.Thread(target=handle_user_input, args=(sock, )).start()
+            if len(response):
+                print (response.decode("utf-8"))
 
-    except KeyboardInterrupt:
-        print("Closed session with server")
-        sock.close()
-    except SystemExit:
-        print("Closed session with server")
-        sock.close()
-    finally:
-        sock.close()
+        except ConnectionAbortedError as e:
+            print ("Connection was aborted handle response")
+            print (e)
+
+if __name__ == "__main__":
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        c = Client(sock, HOST, PORT)
+        c.start()

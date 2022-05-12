@@ -1,54 +1,89 @@
-from concurrent.futures import thread
 import sys
 import socket
 import threading
+import queue
+from typing import final
 
 HOST, PORT = sys.argv[1], int(sys.argv[2])
 
-MAX_SIZE = 1024
+MAX_SIZE = 2048
 
-thread_count = 0
-
-clients = set()
-clients_lock = threading.Lock()
-
-def threaded_client(connection):
-    try:
-        connection.send(str.encode('Welcome to the Server'))
+class ThreadedClient:
+    def __init__(self, connection):
+        self.connection = connection
+        self.send_q = queue.Queue(maxsize=10)
         
+    def run(self):
+        try:
+            self.connection.send("Welcome to the server!".encode('utf-8'))
+            self.listen()
+        except Exception as e:
+            print (e)
+        finally:
+            self.connection.close()
+
+    def listen(self):
         while True:
-            data = connection.recv(2048)
-            reply = 'Server Says: ' + data.decode('utf-8')
-            if not data:
-                break
+            print ("Checking queue...")
+            if not self.send_q.empty():
+                self.send_message()
+            else:
+                print ("No message in queue")
 
-            print (reply)
-            with clients_lock:
-                for c in clients:
-                    c.send(str.encode(reply))
+            message = self.connection.recv(MAX_SIZE)
 
-        connection.close()
-    except KeyboardInterrupt:
-        connection.close()
-    finally:
-        connection.close()
+            self.add_message(message=message)
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as lsock:
-    try:
-        lsock.bind((HOST, PORT))
-        lsock.listen()
-
-        while True:
-            Client, address = lsock.accept()
-            with clients_lock:
-                clients.add(Client)
-            print('Connected to: ' + address[0] + ':' + str(address[1]))
-            threading.Thread(target=threaded_client, args=(Client, )).start()
-            thread_count += 1
-            print('Thread Number: ' + str(thread_count))     
+    def add_message(self, message):
+        self.send_q.put(message)
     
-    except KeyboardInterrupt:
-        print("Caught keyboard interrupt, exiting")
-        lsock.close() 
-    finally:
-        lsock.close() 
+    def get_message(self):
+        if self.send_q.empty():
+            print ("No message found")
+            return
+
+        return self.send_q.get()
+
+    def send_message(self):
+        message = self.get_message()
+
+        if message:
+            self.connection.sendall(message)
+       
+class Server:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.clients = set()
+        self.clients_lock = threading.Lock()
+
+    def run(self):
+        try:
+            self.socket.bind((self.host, self.port))
+            self.socket.listen(10)
+
+            while True:
+                Client, address = self.socket.accept()
+
+                print('Connected to: ' + address[0] + ':' + str(address[1]))
+
+                with self.clients_lock:
+                    self.clients.add(Client)
+
+                threading.Thread(target=self.target, args=(Client,)).start()
+
+        except KeyboardInterrupt:
+            print("Caught keyboard interrupt, exiting")
+            self.socket.close() 
+        finally:
+            print ("Closing socket")
+            self.socket.close() 
+
+    def target(self, Client):
+        client_thread = ThreadedClient(Client)
+        client_thread.run()
+
+if __name__ == "__main__":
+    server = Server(HOST, PORT)
+    server.run()
