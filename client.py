@@ -2,7 +2,7 @@ import sys
 import socket
 import threading
 
-from server import MAX_SIZE
+from common import MAX_SIZE
 
 HOST, PORT = sys.argv[1], int(sys.argv[2])
 
